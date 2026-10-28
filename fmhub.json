@@ -1,0 +1,5 @@
+{
+  "what": "SPELLBOX turns the FM-1 into a talking spelling toy after the 1978 Speak & Spell: an 8-character fluorescent display, a 10-pole LPC voice at 8 kHz through an 8-bit DAC, and the SPELL, LETTER, SAY IT, SECRET CODE and MYSTERY WORD games over four levels, with the keys as an A-to-Z keyboard. SPEAK says whatever you type (a 12,000-word pronouncing dictionary plus letter-to-sound rules), and SING and LETTER SYNTH play words and letters across the keyboard as an instrument. Circuit-bending knobs (chip clock, pitch, speed, corrupted coefficients, stutter, bit crush) give it the sound of a bent Speak & Spell. No TI data is used: all speech is newly made with espeak-ng.",
+  "kinds": ["synth", "other"],
+  "play": "https://pjac1810.github.io/spellbox/"
+}
