@@ -43,7 +43,7 @@ Il est bâti sur [foma](https://github.com/konsumer/foma) (plateforme Felucca), 
 2. Sinon, il cherche un mot connu suivi d'une terminaison : -S, -ES, -ED, -ING, -LY, -ER, -EST, -NESS (« RUNNING » = RUN + ING).
 3. Sinon, il applique des règles de lecture, comme les puces des années 80. Les noms propres et les mots inventés sont donc lus à l'anglaise.
 
-Les phonèmes s'enchaînent sans coupure, avec une intonation qui monte sur les syllabes accentuées et retombe en fin de phrase.
+Les phonèmes s'enchaînent sans coupure, sur une voix grave (autour de 80 Hz), avec une intonation qui monte sur les syllabes accentuées et retombe en fin de phrase. SPEED et PITCH (page VOICE) l'ajustent encore.
 
 | Commande FM-1 | Fonction |
 |---|---|

@@ -54,7 +54,7 @@ PHRASES = [
   ("PLAY", "play the letters"),
   ("SPEAK", "type, and I will speak"),
 ]
-LETTERS = ["ay", "bee", "see", "dee", "ee", "eff", "jee", "aitch", "eye", "jay", "kay", "ell", "em", "en", "oh", "pee", "cue",
+LETTERS = ["[['eI]]", "bee", "see", "dee", "ee", "eff", "jee", "aitch", "eye", "jay", "kay", "ell", "em", "en", "oh", "pee", "cue",
            "are", "ess", "tee", "you", "vee", "double you", "ex", "why", "zee"]
 NUMBERS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
 WORDS = [  # four levels of 25 words, at most 8 letters (the display)
@@ -575,7 +575,8 @@ def main():
       utts.append((f"w{lv}_{w}", w))
   analysed = []
   for name, text in utts:
-    x, _ = es.say(text, VOICE["rate"], VOICE["pitch"], VOICE["rng"])
+    ph = text.startswith("[[")  # written in espeak's phonemes
+    x, _ = es.say(text[2:-2] if ph else text, VOICE["rate"], VOICE["pitch"], VOICE["rng"], phonemes=ph)
     x = trim(x)
     analysed.append(analyse(x / (np.abs(x).max() + 1e-9) * 0.9))
   # ---- the phonemes, cut from monotone espeak speech

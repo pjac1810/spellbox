@@ -215,17 +215,17 @@ int tts_say(const char *text, uint8_t *ph_out, int ph_max) {
   int stressed = 0, last = -1;
   for (int j = 0; j < np; j++)
     if (ph[j] & PH_STRESS) stressed++, last = j;
-  /* the pitch: 120 Hz down to 100 Hz over the phrase; stressed vowels a step up, the last one falling */
+  /* the pitch: 85 Hz down to 71 Hz over the phrase; stressed vowels a step up, the last one falling */
   int s = 0, first = 1;
   for (int j = 0; j < np; j++) {
     uint8_t p = ph[j] & 0x3F;
     if (is_vowel_ph(p)) {
-      int hz = 120 - 20 * j / (np ? np : 1);
+      int hz = 85 - 14 * j / (np ? np : 1);
       if (ph[j] & PH_STRESS) hz = j == last && stressed > 1 ? hz * 9 / 10 : hz * 115 / 100 - s * 3, s++;
       sp_queue(SPQ_PITCH((uint16_t)(8000 * 16 / hz)));
     }
     uint16_t it = (uint16_t)(SP_PHONEME + p);
-    sp_queue(first ? SPQ_SAYH(it) : SPQ_SAYC(it));
+    sp_queue(first ? SPQ_SAY(it) : SPQ_SAYC(it)); /* each phoneme frame lasts 25 ms */
     first = 0;
   }
   sp_queue(SPQ_PITCH(0));

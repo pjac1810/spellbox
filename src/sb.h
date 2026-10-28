@@ -14,8 +14,8 @@
 #define SPQ_MARK(v) ((uint16_t)(0x4000u | (v)))                        /* sp_mark = v when reached (v < 0x2000) */
 #define SPQ_PAUSE(n10ms) ((uint16_t)(0x6000u | (n10ms)))               /* silence, n < 4096 */
 #define SPQ_PITCH(per16) ((uint16_t)(0x7000u | (per16)))               /* voiced frames' period x 16 (0: their own) */
-#define SPQ_SAYH(id) ((uint16_t)(0x0800u | (id)))                      /* an utterance in 12.5 ms frames (a phoneme) */
-#define SPQ_SAYC(id) ((uint16_t)(0x2800u | (id)))                      /* ... joined to the one before, no break */
+#define SPQ_SAYH(id) ((uint16_t)(0x0800u | (id)))                      /* an utterance at double speed (12.5 ms frames) */
+#define SPQ_SAYC(id) ((uint16_t)(0x2000u | (id)))                      /* joined to the one before, no break */
 
 typedef struct { /* the circuit-bending knobs, written by loop() */
   int16_t pitch;   /* semitones -12..12 */
