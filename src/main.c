@@ -2,12 +2,13 @@
 /* SPELLBOX: a talking spelling game for the M-VAVE FM-1, after the 1978 educational toys (README.md has the map).
  *
  *   keys        the letters: A on the lowest key (F3) .. Z; the top key (G5) is ENTER
- *   PRESETS     the game: SPELL, LETTER, SAY IT, SECRET CODE, MYSTERY WORD, SING   (EDIT: the next one)
- *   SELECT      the level 1..4 (SING: what to sing)        ALGORITHM  English / French
+ *   PRESETS     the game: SPELL, LETTER, SAY IT, SECRET CODE, MYSTERY WORD, SING, LETTER SYNTH, SPEAK (EDIT: next)
+ *   SELECT, ALGORITHM   the level 1..4 (SING: what to sing; LETTER SYNTH: A-Z or one letter)
+ *   SPEAK       type words (OCT+ a space, OCT- or REC erase), ENTER says them
  *   PLAY ENTER   REC ERASE   SEQ REPEAT   SEL a new game
  *   HOME        VOICE: PITCH, SPEED, CLOCK, TONE           ENV  BEND: BEND, STUTTER, MONOTONE, CRUSH
- *   GLO         the bends on / off      SAVE  keep the language, level and knobs
- *   OCT- OCT+   SING: the keys' octave */
+ *   GLO         the bends on / off      SAVE  keep the level and knobs
+ *   OCT- OCT+   SING, LETTER SYNTH: the keys' octave */
 #include "fm1.h"
 #include "sb.h"
 #include "speech.h"
@@ -136,13 +137,16 @@ static void apply_knobs(void) {
 
 /* ---------------------------------------------------------------- the games */
 
-enum { M_SPELL, M_LETTER, M_SAYIT, M_CODE, M_MYSTERY, M_SING, M_COUNT };
-static const char *const MODE_NAME[M_COUNT] = {"SPELL", "LETTER", "SAY IT", "SECRET CODE", "MYSTERY WORD", "SING"};
-static const char *const MODE_FR[M_COUNT] = {"EPELLE", "LETTRE", "DIS-LE", "CODE SECRET", "MOT MYSTERE", "CHANTE"};
+enum { M_SPELL, M_LETTER, M_SAYIT, M_CODE, M_MYSTERY, M_SING, M_LSYNTH, M_SPEAK, M_COUNT };
+static const char *const MODE_NAME[M_COUNT] = {"SPELL", "LETTER", "SAY IT", "SECRET CODE", "MYSTERY WORD", "SING", "LETTER SYNTH", "SPEAK"};
 
 enum { AFTER_NONE, AFTER_NEXT_WORD, AFTER_SCORE, AFTER_NEW_ROUND, AFTER_MYSTERY_NEW, AFTER_SAYIT_NEXT };
 
-static uint8_t mode, level, lang, after;
+static uint8_t mode, level, after;
+static uint8_t lsyn; /* LETTER SYNTH: 0 every key its letter, 1..26 one letter on every key */
+#define TEXT_MAX 32
+static char typed[TEXT_MAX + 1]; /* SPEAK */
+static uint8_t text_len;
 static char input[9], disp[9];
 static uint8_t in_len;
 static uint8_t list[10], round_i, score, tries, said, reveal, misses, guessed_done;
@@ -154,10 +158,10 @@ static uint32_t saved_t;
 #define ROUND 10
 #define MISSES 7
 
-static uint16_t sp_id(int base) { return (uint16_t)(lang * SP_PER_LANG + base); }
+static uint16_t sp_id(int base) { return (uint16_t)base; }
 static void say(int base) { sp_queue(SPQ_SAY(sp_id(base))); }
 static int word_n(int i) { return level * WORDS_PER_LEVEL + list[i]; }
-static const char *word_text(int i) { return lang ? WORD_FR[word_n(i)] : WORD_EN[word_n(i)]; }
+static const char *word_text(int i) { return WORD_EN[word_n(i)]; }
 static void say_word(int i) { say(SP_WORD + word_n(i)); }
 static int slen(const char *s) {
   int n = 0;
@@ -212,7 +216,7 @@ static void start_mode(int announce, int pre_a, int pre_b) { /* pre: said first 
   sp_stop();
   if (pre_a >= 0) say(pre_a);
   if (pre_b >= 0) say(pre_b);
-  after = AFTER_NONE, reveal = 0, sing_held = 0, sp_sing = 0;
+  after = AFTER_NONE, reveal = 0, sing_held = 0, sp_sing = 0, sp_hold = 0;
   clear_input(), set_disp("");
   round_i = 0, score = 0;
   switch (mode) {
@@ -235,9 +239,17 @@ static void start_mode(int announce, int pre_a, int pre_b) { /* pre: said first 
       new_mystery();
       say(SP_PHRASE + PH_MYSTERY), say(SP_PHRASE + PH_GUESS);
       break;
-    default:
+    case M_SING:
       if (announce) say(SP_PHRASE + PH_SING);
       set_disp(SP_TEXT[sp_id(sing_word)]);
+      break;
+    case M_LSYNTH:
+      if (announce) say(SP_PHRASE + PH_PLAY);
+      set_disp(lsyn ? (const char[]){(char)('A' + lsyn - 1), 0} : "A-Z");
+      break;
+    default:
+      if (announce) say(SP_PHRASE + PH_SPEAK);
+      set_disp(text_len > 8 ? typed + text_len - 8 : typed);
       break;
   }
 }
@@ -334,8 +346,20 @@ static void letter_key(int L) {
       }
       break;
     }
+    case M_SPEAK:
+      if (text_len < TEXT_MAX) typed[text_len++] = c, typed[text_len] = 0;
+      set_disp(text_len > 8 ? typed + text_len - 8 : typed);
+      sp_stop(), say(SP_LETTER + L);
+      break;
     default: break;
   }
+}
+
+static void speak_text(void) {
+  uint8_t ph[4];
+  if (!text_len) return;
+  sp_stop(), sp_hold = 0, sp_sing = 0;
+  tts_say(typed, ph, 0);
 }
 
 static void enter(void) {
@@ -360,12 +384,18 @@ static void enter(void) {
     case M_MYSTERY:
       sp_stop(), new_mystery(), say(SP_PHRASE + PH_GUESS), after = AFTER_NONE;
       break;
+    case M_SPEAK: speak_text(); break;
     default: break;
   }
 }
 
 static void erase(void) {
   if ((mode == M_SPELL || mode == M_CODE) && in_len && after == AFTER_NONE) input[--in_len] = 0, set_disp(input);
+  if (mode == M_SPEAK && text_len) typed[--text_len] = 0, set_disp(text_len > 8 ? typed + text_len - 8 : typed);
+}
+static void space(void) {
+  if (text_len && text_len < TEXT_MAX && typed[text_len - 1] != ' ') typed[text_len++] = ' ', typed[text_len] = 0;
+  set_disp(text_len > 8 ? typed + text_len - 8 : typed);
 }
 
 static void repeat(void) {
@@ -374,6 +404,7 @@ static void repeat(void) {
   else if (mode == M_SAYIT) say_word(round_i);
   else if (mode == M_MYSTERY) say(SP_PHRASE + PH_GUESS);
   else if (mode == M_SING) say(sing_word);
+  else if (mode == M_SPEAK) speak_text();
 }
 
 /* what to do once the talking is over */
@@ -405,21 +436,21 @@ static void follow_up(void) {
 static void draw_title(void) {
   rect(0, 0, SCREEN_W, 18, C_PANEL);
   text(6, 1, "SPELLBOX", C_CASE, FONT_SMALL);
-  char b[16], *d = put(b, lang ? "FR  " : "EN  ");
-  put_int(put(d, lang ? "NIV " : "LEVEL "), level + 1);
+  char b[16];
+  put_int(put(b, "LEVEL "), level + 1);
   text(SCREEN_W - 6 - text_width(b, FONT_SMALL), 1, b, C_TEXT, FONT_SMALL);
 }
 
 static void draw_info(void) {
   rect(0, INFO_Y, SCREEN_W, 34, C_BG);
-  center_text(SCREEN_W / 2, INFO_Y, (lang ? MODE_FR : MODE_NAME)[mode], C_YELLOW, FONT_SMALL);
+  center_text(SCREEN_W / 2, INFO_Y, MODE_NAME[mode], C_YELLOW, FONT_SMALL);
   char b[40], *d = b;
   b[0] = 0;
   if (mode == M_SPELL || mode == M_SAYIT) {
-    d = put_int(put(d, lang ? "MOT " : "WORD "), (round_i < ROUND ? round_i : ROUND - 1) + 1);
+    d = put_int(put(d, "WORD "), (round_i < ROUND ? round_i : ROUND - 1) + 1);
     d = put_int(put(put(d, "/10   "), "SCORE "), score);
   } else if (mode == M_MYSTERY) {
-    d = put_int(put(d, lang ? "ERREURS " : "MISSES "), misses);
+    d = put_int(put(d, "MISSES "), misses);
     put(put_int(put(d, "/"), MISSES), "");
   } else if (mode == M_SING) {
     const char *t = SP_TEXT[sp_id(sing_word)];
@@ -427,11 +458,22 @@ static void draw_info(void) {
     for (int i = 0; i < n && i < 29; i++) b[i] = t[i];
     b[n < 29 ? n : 29] = 0;
   } else if (mode == M_CODE) {
-    put(b, lang ? "A=Z  B=Y  C=X ..." : "A=Z  B=Y  C=X ...");
+    put(b, "A=Z  B=Y  C=X ...");
+  } else if (mode == M_LSYNTH) {
+    if (lsyn) b[0] = (char)('A' + lsyn - 1), put(put(b + 1, " "), "ON EVERY KEY");
+    else put(b, "EVERY KEY ITS LETTER");
+  } else if (mode == M_SPEAK) {
+    const char *t = text_len > 29 ? typed + text_len - 29 : typed;
+    put(b, text_len ? t : "TYPE  OCT+ = SPACE");
   }
   center_text(SCREEN_W / 2, INFO_Y + 17, b, C_DIM, FONT_SMALL);
 }
 
+static char key_label(int k) {
+  if (mode == M_SING) return 0;
+  if (mode == M_LSYNTH) return lsyn ? (char)('A' + lsyn - 1) : (char)('A' + k % 26);
+  return k == 26 ? '>' : (char)('A' + k);
+}
 static const int8_t WHITE_OF[KEY_COUNT] = {0, -1, 1, -1, 2, -1, 3, 4, -1, 5, -1, 6, 7, -1, 8, -1, 9, -1, 10, 11, -1, 12, -1, 13, 14, -1, 15};
 static void draw_keys(uint32_t held, uint32_t lit) {
   rect(0, KEYS_Y, SCREEN_W, 48, C_BG);
@@ -441,8 +483,7 @@ static void draw_keys(uint32_t held, uint32_t lit) {
     int x = w * 15;
     uint16_t c = (held >> k & 1u) ? C_YELLOW : (lit >> k & 1u) ? RGB(150, 140, 120) : C_TEXT;
     rect(x, KEYS_Y, 14, 46, c);
-    char b[2] = {k == 26 ? '>' : (char)('A' + k), 0};
-    if (mode == M_SING) b[0] = 0;
+    char b[2] = {key_label(k), 0};
     center_text(x + 7, KEYS_Y + 28, b, C_BG, FONT_SMALL);
   }
   for (int k = 0; k < KEY_COUNT; k++) { /* the black keys */
@@ -450,8 +491,8 @@ static void draw_keys(uint32_t held, uint32_t lit) {
     int x = WHITE_OF[k - 1] * 15 + 9;
     uint16_t c = (held >> k & 1u) ? C_YELLOW : (lit >> k & 1u) ? RGB(90, 80, 60) : RGB(28, 26, 24);
     rect(x, KEYS_Y, 11, 26, c);
-    char b[2] = {(char)('A' + k), 0};
-    if (mode != M_SING) center_text(x + 6, KEYS_Y + 4, b, (held >> k & 1u) ? C_BG : C_TEXT, FONT_SMALL);
+    char b[2] = {key_label(k), 0};
+    if (b[0]) center_text(x + 6, KEYS_Y + 4, b, (held >> k & 1u) ? C_BG : C_TEXT, FONT_SMALL);
   }
 }
 
@@ -474,7 +515,7 @@ static void draw_foot(uint32_t now) {
   line(0, FOOT_Y, SCREEN_W - 1, FOOT_Y, C_FAINT);
   text(6, FOOT_Y + 4, page ? "BEND" : "VOICE", C_CASE, FONT_SMALL);
   if (now - saved_t < 1500 && saved_t) text(SCREEN_W - 6 - text_width("SAVED", FONT_SMALL), FOOT_Y + 4, "SAVED", C_YELLOW, FONT_SMALL);
-  else if (mode == M_SING) {
+  else if (mode == M_SING || mode == M_LSYNTH) {
     char b[12], *d = put(b, "OCT");
     d = put(d, oct > 0 ? "+" : oct < 0 ? "" : " ");
     put_int(d, oct);
@@ -487,10 +528,10 @@ static void draw_foot(uint32_t now) {
 
 /* ---------------------------------------------------------------- setup and loop */
 
-#define STORE_MAGIC 0x53504C31u /* "SPL1" */
+#define STORE_MAGIC 0x53504C32u /* "SPL2" */
 static struct {
   uint32_t magic;
-  uint8_t lang, level, bends_on, pad;
+  uint8_t lsyn, level, bends_on, pad;
   int16_t knob[KN_COUNT];
 } store;
 
@@ -501,7 +542,7 @@ static uint8_t drawn;
 void setup(void) {
   for (int i = 0; i < KN_COUNT; i++) knob[i] = KN_INIT[i];
   if (!settings_load(&store, sizeof store) && store.magic == STORE_MAGIC) {
-    lang = store.lang & 1u, level = (uint8_t)(store.level & 3u), bends_on = store.bends_on & 1u;
+    lsyn = (uint8_t)(store.lsyn % 27u), level = (uint8_t)(store.level & 3u), bends_on = store.bends_on & 1u;
     for (int i = 0; i < KN_COUNT; i++) knob[i] = (int16_t)clampi(store.knob[i], KN_LO[i], KN_HI[i]);
   }
   apply_knobs();
@@ -517,19 +558,29 @@ void setup(void) {
 }
 
 static void save_all(void) {
-  store.magic = STORE_MAGIC, store.lang = lang, store.level = level, store.bends_on = bends_on, store.pad = 0;
+  store.magic = STORE_MAGIC, store.lsyn = lsyn, store.level = level, store.bends_on = bends_on, store.pad = 0;
   for (int i = 0; i < KN_COUNT; i++) store.knob[i] = knob[i];
   settings_save(&store, sizeof store);
 }
 
+/* SING and LETTER SYNTH: a key sings at its pitch, and holds the sound while it is held */
 static void sing_key(int note, int on) {
   if (on) {
     sing_note = (uint8_t)clampi(note, 24, 108), sing_held = 1;
-    sp_sing = sing_note;
-    sp_stop(), sp_queue(SPQ_SAY(sp_id(sing_word)));
+    int what = sing_word;
+    if (mode == M_LSYNTH) {
+      int L = lsyn ? lsyn - 1 : ((note - KEY_FIRST_NOTE - oct * 12) % 26 + 26) % 26;
+      static const char *const NN[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+      char b[9], *d = b;
+      *d++ = (char)('A' + L), *d++ = ' ', *d++ = ' ';
+      put_int(put(d, NN[sing_note % 12]), sing_note / 12 - 1);
+      set_disp(b);
+      what = SP_LETTER + L;
+    }
+    sp_sing = sing_note, sp_hold = 1;
+    sp_stop(), sp_queue(SPQ_SAY(sp_id(what)));
   } else if (note == sing_note) {
-    sing_held = 0;
-    sp_stop();
+    sing_held = 0, sp_hold = 0; /* it says the rest and stops */
   }
 }
 
@@ -541,29 +592,36 @@ void loop(void) {
   if (button_pressed(BTN_PLAY)) enter();
   if (button_pressed(BTN_REC)) erase();
   if (button_pressed(BTN_SEQ)) repeat();
-  if (button_pressed(BTN_SEL)) start_mode(0, -1, -1);
+  if (button_pressed(BTN_SEL)) {
+    if (mode == M_SPEAK) text_len = 0, typed[0] = 0; /* SPEAK: a clean sheet */
+    start_mode(0, -1, -1);
+  }
   if (button_pressed(BTN_EDIT)) mode = (uint8_t)((mode + 1) % M_COUNT), start_mode(1, -1, -1);
   if (button_pressed(BTN_HOME)) page = 0;
   if (button_pressed(BTN_ENV)) page = 1;
   if (button_pressed(BTN_GLO)) bends_on ^= 1;
   if (button_pressed(BTN_SAVE)) save_all(), saved_t = now ? now : 1;
-  if (button_pressed(BTN_OCT_DOWN) || button_pressed(BTN_OCT_UP)) {
+  if (mode == M_SPEAK) {
+    if (button_pressed(BTN_OCT_UP)) space();
+    if (button_pressed(BTN_OCT_DOWN)) erase();
+  } else if (button_pressed(BTN_OCT_DOWN) || button_pressed(BTN_OCT_UP)) {
     if (button_held(BTN_OCT_DOWN) && button_held(BTN_OCT_UP)) oct = 0;
     else oct = (int8_t)clampi(oct + (button_pressed(BTN_OCT_UP) ? 1 : -1), -2, 2);
   }
 
   /* ---- encoders */
   if ((e = encoder(ENC_PRESETS))) mode = (uint8_t)((mode + M_COUNT * 8 + e) % M_COUNT), start_mode(1, -1, -1);
-  if ((e = encoder(ENC_ALGORITHM))) {
-    lang ^= 1;
-    start_mode(0, SP_PHRASE + PH_LANGUAGE, -1);
-  }
-  if ((e = encoder(ENC_SELECT))) {
+  if ((e = encoder(ENC_SELECT) + encoder(ENC_ALGORITHM))) {
     if (mode == M_SING) {
-      sing_word = (uint8_t)((sing_word + SP_PER_LANG * 8 + e) % SP_PER_LANG);
+      sing_word = (uint8_t)((sing_word + SP_PHONEME * 8 + e) % SP_PHONEME);
       set_disp(SP_TEXT[sp_id(sing_word)]);
-      sp_stop(), sp_sing = 0, say(sing_word);
-    } else {
+      sp_stop(), sp_sing = 0, sp_hold = 0, say(sing_word);
+    } else if (mode == M_LSYNTH) {
+      lsyn = (uint8_t)((lsyn + 27 * 8 + e) % 27);
+      set_disp(lsyn ? (const char[]){(char)('A' + lsyn - 1), 0} : "A-Z");
+      sp_stop(), sp_sing = 0, sp_hold = 0;
+      if (lsyn) say(SP_LETTER + lsyn - 1);
+    } else if (mode != M_SPEAK) {
       level = (uint8_t)clampi(level + (e > 0 ? 1 : -1), 0, LEVELS - 1);
       start_mode(0, SP_PHRASE + PH_LEVEL, SP_NUMBER + level + 1);
     }
@@ -579,7 +637,7 @@ void loop(void) {
   uint32_t held = 0;
   for (int k = 0; k < KEY_COUNT; k++) {
     if (key_held(k)) held |= 1u << k;
-    if (mode == M_SING) {
+    if (mode == M_SING || mode == M_LSYNTH) {
       if (key_pressed(k)) sing_key(KEY_FIRST_NOTE + k + oct * 12, 1);
       if (key_released(k)) sing_key(KEY_FIRST_NOTE + k + oct * 12, 0);
     } else if (key_pressed(k)) {
@@ -590,11 +648,10 @@ void loop(void) {
   uint8_t st, d1, d2;
   while (midi_read(&st, &d1, &d2)) {
     int t = st & 0xF0;
-    if (mode != M_SING) continue;
+    if (mode != M_SING && mode != M_LSYNTH) continue;
     if (t == 0x90 && d2) sing_key(d1, 1);
     else if (t == 0x80 || (t == 0x90 && !d2)) sing_key(d1, 0);
   }
-  if (mode == M_SING && sing_held && !sp_busy()) sp_queue(SPQ_SAY(sp_id(sing_word))); /* held: again */
   follow_up();
 
   /* the correct spelling appears letter by letter as it is said */
@@ -609,8 +666,8 @@ void loop(void) {
   uint32_t lit = 0, lb = 0;
   if (mode == M_MYSTERY) lit = guessed;
   if (mode == M_SPELL && after == AFTER_NONE && in_len) lb |= 1u << BTN_PLAY;
-  if (mode == M_SAYIT || mode == M_CODE || (mode == M_MYSTERY && guessed_done)) lb |= 1u << BTN_PLAY;
-  if (in_len) lb |= 1u << BTN_REC;
+  if (mode == M_SAYIT || mode == M_CODE || (mode == M_MYSTERY && guessed_done) || (mode == M_SPEAK && text_len)) lb |= 1u << BTN_PLAY;
+  if (in_len || (mode == M_SPEAK && text_len)) lb |= 1u << BTN_REC;
   lb |= 1u << (page ? BTN_ENV : BTN_HOME);
   if (bends_on) lb |= 1u << BTN_GLO;
   if (sp_busy()) lb |= 1u << BTN_SEQ;
@@ -628,20 +685,22 @@ void loop(void) {
 
   /* ---- the screen, only what changed */
   if (!drawn) clear(C_BG), drawn = 1;
-  uint32_t h = (uint32_t)lang | (uint32_t)level << 1;
+  uint32_t h = (uint32_t)level;
   if (h != sh_title) sh_title = h, draw_title();
   int cursor = (mode == M_SPELL || mode == M_CODE) && after == AFTER_NONE && !reveal && (now / 400) % 2 ? in_len : -1;
+  if (mode == M_SPEAK && (now / 400) % 2) cursor = text_len < 8 ? text_len : -1;
   h = (uint32_t)(cursor + 1);
   for (int i = 0; i < 8 && disp[i]; i++) h = h * 131u + (uint8_t)disp[i];
   if (h != sh_vfd) sh_vfd = h, draw_vfd(disp, cursor);
-  h = (uint32_t)mode | (uint32_t)lang << 3 | (uint32_t)round_i << 4 | (uint32_t)score << 9 | (uint32_t)misses << 14 | (uint32_t)sing_word << 18;
+  h = (uint32_t)mode | (uint32_t)lsyn << 24 | (uint32_t)round_i << 4 | (uint32_t)score << 9 | (uint32_t)misses << 14 | (uint32_t)sing_word << 18;
+  for (int i = 0; i < text_len; i++) h = h * 31u + (uint8_t)typed[i];
   if (h != sh_info) sh_info = h, draw_info();
-  h = (held * 7u) ^ (lit * 13u) ^ (uint32_t)(mode == M_SING) << 31;
+  h = (held * 7u) ^ (lit * 13u) ^ (uint32_t)mode << 28 ^ (uint32_t)lsyn << 22;
   if (h != sh_keys) sh_keys = h, draw_keys(held, lit);
   h = (uint32_t)page | (uint32_t)bends_on << 1;
   for (int i = 0; i < 4; i++) h = h * 257u + (uint32_t)(knob[page * 4 + i] + 20);
   if (h != sh_knobs) sh_knobs = h, draw_knobs();
-  h = (uint32_t)page | (uint32_t)bends_on << 1 | (uint32_t)(mode == M_SING) << 2 | (uint32_t)(oct + 2) << 3 | (uint32_t)(now - saved_t < 1500) << 6;
+  h = (uint32_t)page | (uint32_t)bends_on << 1 | (uint32_t)(mode == M_SING || mode == M_LSYNTH) << 2 | (uint32_t)(oct + 2) << 3 | (uint32_t)(now - saved_t < 1500) << 6;
   if (h != sh_foot) sh_foot = h, draw_foot(now);
 }
 

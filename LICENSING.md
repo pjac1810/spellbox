@@ -29,5 +29,7 @@ SPELLBOX: `src/`, `firmware.json`, and its changes to the rest, by its authors, 
 | Terminus font (ter-u16n), rendered into `platform/gen/felucca_font.h`                     | SIL OFL 1.1 | `platform/gen/Terminus-LICENSE.txt`             |
 | `platform/sdk/uboot.boot`, `cfg_tool.bin`, `eq_cfg_hw.bin` from JieLi's AC79NN_SDK_V1.2.1 | Apache-2.0  | <https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK> |
 | JieLi's toolchain, downloaded into the Docker image                                       | JieLi's     | <https://pkgman.jieliapp.com/s/linux-toolchain> |
+| `src/speech.h`: speech made with espeak-ng (only its output, coded by `tools/gen_speech.py`) | GPL-3.0     | <https://github.com/espeak-ng/espeak-ng>        |
+| `src/speech.h`: which words are in the dictionary, from wordfreq's frequency lists         | CC BY-SA 4.0 | <https://github.com/rspeer/wordfreq>           |
 
-"M-VAVE" and "FM-1" belong to their owners; "Felucca" and "Hügelton Instruments" to Hügelton Instruments. This project is not made or endorsed by them.
+"Speak & Spell" belongs to Texas Instruments, "M-VAVE" and "FM-1" to their owners; "Felucca" and "Hügelton Instruments" to Hügelton Instruments. This project is not made or endorsed by them.

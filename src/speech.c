@@ -9,10 +9,10 @@
 
 volatile sp_param_t SP = {0, 64, 64, 0, 0, 0, 0, 64};
 volatile uint16_t sp_mark;
-volatile uint8_t sp_sing, sp_level;
+volatile uint8_t sp_sing, sp_level, sp_hold;
 
 /* ---- the queue: loop() writes, audio() reads */
-#define QN 64
+#define QN 256
 static volatile uint16_t q[QN];
 static volatile uint32_t q_wr, q_rd, flush_to, flush_seq;
 static uint32_t flush_seen;
@@ -34,7 +34,9 @@ int sp_busy(void) { return q_wr != q_rd || playing || flush_seq != flush_seen; }
 /* ---- the chip */
 static const uint8_t KBITS[10] = SP_KBITS;
 static uint32_t bitpos, frame_start[4];
-static uint8_t talking, stopping;
+static uint8_t talking, stopping, half; /* half: 12.5 ms frames (the phonemes) */
+static uint32_t hold_pos, hold_e, last_e; /* the loudest voiced frame so far (sp_hold sustains it), its energy; the last frame's */
+static int32_t tts_per;                 /* the period set by SPQ_PITCH, x 16 (0: the frames' own) */
 static int32_t e_old, e_new, p_old, p_new, k_old[10], k_new[10]; /* p: period x 16 */
 static int32_t e_cur, p_cur, k_cur[10];
 static int32_t b[11];
@@ -73,6 +75,7 @@ static int next_frame(void) {
   for (int i = 3; i > 0; i--) frame_start[i] = frame_start[i - 1];
   frame_start[0] = bitpos;
   uint32_t e = getbits(4);
+  last_e = e;
   if (e == 15) return 1;
   if (e == 0) {
     e_new = 0;
@@ -85,12 +88,18 @@ static int next_frame(void) {
     uint32_t f100 = note_inc(sp_sing) / 974u;
     per = f100 ? (int32_t)(clock_hz() * 1600u / f100) : per;
   } else if (p) {
+    if (tts_per) per = tts_per;
     int32_t m = SP.mono < 0 ? 0 : SP.mono > 127 ? 127 : SP.mono; /* monotone: toward 100 Hz */
     per += ((80 * 16 - per) * m) >> 7;
     int s = SP.pitch < -12 ? -12 : SP.pitch > 12 ? 12 : SP.pitch;
     per = (per * SEMI[s + 12]) >> 12;
   }
   p_new = p ? (per < 32 ? 32 : per) : 0;
+  if (p && e + 1 >= hold_e) {
+    hold_pos = frame_start[0];
+    if (e > hold_e) hold_e = e;
+  }
+  if (!p) last_e = 0; /* unvoiced counts as past the vowel */
   if (!rep) {
     int n = p ? 10 : 4;
     for (int i = 0; i < 10; i++) {
@@ -114,12 +123,15 @@ static void start(uint16_t item) {
   if (item & 0x8000u) { /* a beep */
     uint32_t note = item >> 6 & 0x7Fu, n = item & 0x3Fu;
     tone_inc = note_inc((int)note), tone_left = n * 1102u + 1u, tone_ph = 0;
-  } else if ((item & 0xE000u) == 0x6000u) {
-    pause_left = (item & 0x1FFFu) * 441u + 1u;
-  } else if (item & 0x4000u) {
+  } else if ((item & 0xF000u) == 0x7000u) {
+    tts_per = item & 0x0FFFu;
+  } else if ((item & 0xF000u) == 0x6000u) {
+    pause_left = (item & 0x0FFFu) * 441u + 1u;
+  } else if ((item & 0xE000u) == 0x4000u) {
     sp_mark = item & 0x1FFFu;
-  } else if (item < SP_COUNT) {
-    bitpos = SP_AT[item];
+  } else if ((item & 0x07FFu) < SP_COUNT) {
+    half = (uint8_t)(item >> 11 & 1u), hold_pos = 0, hold_e = 0;
+    bitpos = SP_AT[item & 0x07FFu];
     for (int i = 0; i < 4; i++) frame_start[i] = 0;
     for (int i = 0; i < 10; i++) k_new[i] = 0;
     for (int i = 0; i < 11; i++) b[i] = 0;
@@ -129,6 +141,24 @@ static void start(uint16_t item) {
   }
 }
 
+/* at the end of an utterance: the next one joins it without a break when it says so (SPQ_SAYC), pitch settings
+ * on the way are taken; 1 = it goes on */
+static int chain(void) {
+  while (q_rd != q_wr) {
+    uint16_t it = q[q_rd % QN];
+    if ((it & 0xF000u) == 0x7000u) {
+      tts_per = it & 0x0FFFu, q_rd = q_rd + 1;
+      continue;
+    }
+    if ((it & 0xE000u) != 0x2000u || (it & 0x07FFu) >= SP_COUNT) return 0;
+    q_rd = q_rd + 1;
+    half = (uint8_t)(it >> 11 & 1u);
+    bitpos = SP_AT[it & 0x07FFu];
+    return !next_frame();
+  }
+  return 0;
+}
+
 /* one sample of the chip at its clock */
 static int32_t chip(void) {
   if (!talking) {
@@ -136,14 +166,21 @@ static int32_t chip(void) {
     return 0;
   }
   if (n8 == 0) { /* a new frame */
-    int32_t s = SP.speed < 0 ? 0 : SP.speed > 127 ? 127 : SP.speed;
-    frame_len = s <= 64 ? 400u - (uint32_t)s * 200u / 64u : 200u - (uint32_t)(s - 64) * 100u / 63u;
-    step_len = frame_len / 8u;
     if (stopping) {
       talking = 0;
       return 0;
     }
-    if (next_frame()) e_new = 0, p_new = p_old, stopping = 1;
+    int end = next_frame();
+    if (sp_hold && hold_pos && (end || last_e + 3 < hold_e)) { /* held: past the loudest voiced frame, back to it */
+      bitpos = hold_pos;
+      next_frame();
+    } else if (end && !chain()) {
+      e_new = 0, p_new = p_old, stopping = 1;
+    }
+    int32_t s = SP.speed < 0 ? 0 : SP.speed > 127 ? 127 : SP.speed;
+    frame_len = s <= 64 ? 400u - (uint32_t)s * 200u / 64u : 200u - (uint32_t)(s - 64) * 100u / 63u;
+    if (half) frame_len /= 2u;
+    step_len = frame_len / 8u;
   }
   if (n8 % step_len == 0) { /* interpolate, eight steps a frame (not across voiced / unvoiced / silence) */
     int32_t st = (int32_t)(n8 / step_len) + 1;
@@ -201,7 +238,7 @@ void sp_render(int32_t *out, uint32_t frames) {
   if (flush_seq != flush_seen) {
     flush_seen = flush_seq;
     q_rd = flush_to;
-    talking = 0, tone_left = 0, pause_left = 0;
+    talking = 0, tone_left = 0, pause_left = 0, tts_per = 0;
   }
   uint32_t step = clock_hz() * 65536u / SAMPLE_RATE;
   int32_t t = SP.tone < 0 ? 0 : SP.tone > 127 ? 127 : SP.tone;

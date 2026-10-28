@@ -12,7 +12,10 @@
 #define SPQ_SAY(id) ((uint16_t)(id))                                   /* an utterance of speech.h */
 #define SPQ_TONE(note, n25ms) ((uint16_t)(0x8000u | (note) << 6 | (n25ms))) /* a beep, MIDI note, 25 ms units 1..63 */
 #define SPQ_MARK(v) ((uint16_t)(0x4000u | (v)))                        /* sp_mark = v when reached (v < 0x2000) */
-#define SPQ_PAUSE(n10ms) ((uint16_t)(0x6000u | (n10ms)))               /* silence */
+#define SPQ_PAUSE(n10ms) ((uint16_t)(0x6000u | (n10ms)))               /* silence, n < 4096 */
+#define SPQ_PITCH(per16) ((uint16_t)(0x7000u | (per16)))               /* voiced frames' period x 16 (0: their own) */
+#define SPQ_SAYH(id) ((uint16_t)(0x0800u | (id)))                      /* an utterance in 12.5 ms frames (a phoneme) */
+#define SPQ_SAYC(id) ((uint16_t)(0x2800u | (id)))                      /* ... joined to the one before, no break */
 
 typedef struct { /* the circuit-bending knobs, written by loop() */
   int16_t pitch;   /* semitones -12..12 */
@@ -27,6 +30,7 @@ typedef struct { /* the circuit-bending knobs, written by loop() */
 extern volatile sp_param_t SP;
 extern volatile uint16_t sp_mark;   /* the last SPQ_MARK reached */
 extern volatile uint8_t sp_sing;    /* a MIDI note: voiced frames sing at it (0: speak) */
+extern volatile uint8_t sp_hold;    /* 1: at its end, an utterance holds its last loud voiced frame */
 extern volatile uint8_t sp_level;   /* the voice's loudness now, 0..255 (the display glows with it) */
 
 void sp_init(void);
@@ -34,5 +38,9 @@ void sp_queue(uint16_t item); /* from loop() */
 void sp_stop(void);           /* from loop(): forget the queue, stop talking */
 int sp_busy(void);            /* something is queued or playing */
 void sp_render(int32_t *out, uint32_t frames);
+
+/* ---- tts.c: text to speech */
+int tts_word(const char *w, int n, uint8_t *out, int max); /* a word in capitals -> phonemes (PH_STRESS on vowels) */
+int tts_say(const char *text, uint8_t *ph, int ph_max);    /* queue the phrase; its phonemes (how many) */
 
 #endif
