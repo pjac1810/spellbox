@@ -99,3 +99,5 @@ GPL-3.0-only. Crédits : [LICENSING.md](LICENSING.md).
 
 - La voix vient d'espeak-ng (GPL-3.0), utilisé seulement pour fabriquer les données.
 - Le choix des mots du dictionnaire vient des listes de fréquence de [wordfreq](https://github.com/rspeer/wordfreq) (CC BY-SA 4.0).
+
+You can also try SPELLBOX in the browser, no flashing needed, in the free community [FM-1 Emulator](https://fm1-emulator.atst.tools/).
